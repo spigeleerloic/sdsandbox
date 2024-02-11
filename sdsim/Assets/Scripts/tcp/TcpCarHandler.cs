@@ -505,6 +505,20 @@ namespace tk
             yield return null;
         }
 
+        public IEnumerator CrossedFinishLine(int startingLineIndex, float timeStamp)
+        {
+            if (client != null)
+            {
+                JSONObject json = new JSONObject(JSONObject.Type.OBJECT);
+                json.AddField("msg_type", "collision_with_finish_line");
+                json.AddField("finish_line_index", startingLineIndex);
+                json.AddField("timeStamp", timeStamp);
+                client.SendMsg(json);
+            }
+
+            yield return null;
+        }
+
         public void OnNodePositionRecv(JSONObject json)
         {
             int index = int.Parse(json.GetField("index").str);
