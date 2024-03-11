@@ -2,6 +2,7 @@ using System.Collections;
 using UnityEngine;
 using System;
 using System.Collections.Generic;
+using System.Net;
 
 namespace tk
 {
@@ -78,7 +79,7 @@ namespace tk
             JSONObject json = new JSONObject(JSONObject.Type.OBJECT);
             json.AddField("msg_type", "verified");
             client.SendMsg(json);
-            yield return null;
+            yield return null;  
         }
 
         public IEnumerator SendCollisionWithStartingLine(string name, int startingLineIndex, float timeStamp)

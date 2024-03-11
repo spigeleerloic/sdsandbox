@@ -21,10 +21,12 @@ public class SandboxServer : MonoBehaviour
     bool argHost = false;
     bool argPort = false;
 
+    tk.JsonTcpClient jsonTcpClient;
+    tk.TcpClient _client;
+
     public void CheckCommandLineConnectArgs()
     {
         string[] args = System.Environment.GetCommandLineArgs();
-
 
         if (!privateAPI)
         {
@@ -56,6 +58,7 @@ public class SandboxServer : MonoBehaviour
     private void Awake()
     {
         _server = GetComponent<tk.TcpServer>();
+        
     }
 
     // Start is called before the first frame update
@@ -63,11 +66,10 @@ public class SandboxServer : MonoBehaviour
     {
         CheckCommandLineConnectArgs();
 
-        Debug.Log("SDSandbox Server starting.");
-        _server.onClientConntedCB += new tk.TcpServer.OnClientConnected(OnClientConnected);
-        _server.onClientDisconntedCB += new tk.TcpServer.OnClientDisconnected(OnClientDisconnected);
-
-        _server.Run(host, port);
+        Debug.Log("[SandboxServer] SDSandbox Server starts running on " + GlobalState.host + ":" + port);
+        _server.Run(GlobalState.host, port);
+        //Debug.Log("[SandboxServer] starting client");
+        //tk.TcpClient client = OnClientConnected();
     }
 
     // It's our responsibility to create a GameObject with a TcpClient
@@ -76,12 +78,12 @@ public class SandboxServer : MonoBehaviour
     {
         if (clientTemplateObj == null)
         {
-            Debug.LogError("client template object was null.");
+            Debug.LogError("[SandboxServer] client template object was null.");
             return null;
         }
 
         if (_server.debug)
-            Debug.Log("creating client obj");
+            Debug.Log("[SandboxServer] creating client obj");
 
         GameObject go = GameObject.Instantiate(clientTemplateObj) as GameObject;
 
@@ -92,6 +94,8 @@ public class SandboxServer : MonoBehaviour
 
         tk.TcpClient client = go.GetComponent<tk.TcpClient>();
 
+        Debug.Log("[SandboxServer] connecting client to server.");
+        //client.connect(GlobalState.host, port);
         InitClient(client);
 
         return client;
@@ -99,41 +103,66 @@ public class SandboxServer : MonoBehaviour
 
     private void InitClient(tk.TcpClient client)
     {
+        
         if (privateAPI) // private API client server
         {
+            Debug.Log("[SandboxServer] init client private API.");
             PrivateAPI privateAPIHandler = GameObject.FindObjectOfType<PrivateAPI>();
             if (privateAPIHandler != null)
             {
                 if (_server.debug)
                     Debug.Log("init private API handler.");
 
-                privateAPIHandler.Init(client.gameObject.GetComponent<tk.JsonTcpClient>());
+                Debug.Log("before init private API handler.");
+                if (jsonTcpClient == null)
+                {
+                    jsonTcpClient = this.gameObject.AddComponent<tk.JsonTcpClient>();
+                    Debug.Log(client == null);
+                }
+                Debug.Log("[SandboxServer] jsonTcpclient created");
+                privateAPIHandler.Init(jsonTcpClient);
+                Debug.Log("[SandboxServer] after init private API handler.");
+
             }
         }
 
         else // normal client server
         {
+            Debug.Log("[SandboxServer] init client normal server.");
             if (spawnCarswClients) // we are on in a track scene
             {
                 CarSpawner spawner = GameObject.FindObjectOfType<CarSpawner>();
                 if (spawner != null)
                 {
-                    if (_server.debug)
-                        Debug.Log("spawning car.");
-
-                    spawner.Spawn(client.gameObject.GetComponent<tk.JsonTcpClient>(), false);
+                    Debug.Log("[SandboxServer] spawning car.");
+                    if (jsonTcpClient == null)
+                    {
+                        jsonTcpClient = this.gameObject.AddComponent<tk.JsonTcpClient>();
+                        Debug.Log(client == null);
+                    }
+                    spawner.Spawn(jsonTcpClient, false);
+                    Debug.Log("[SandboxServer] car spawned.");
                 }
             }
             else //we are in the menu
             {
-
+                Debug.Log("[SandboxServer] we are in the menu.");
                 tk.TcpMenuHandler handler = GameObject.FindObjectOfType<TcpMenuHandler>();
                 if (handler != null)
                 {
                     if (_server.debug)
-                        Debug.Log("init menu handler.");
-
-                    handler.Init(client.gameObject.GetComponent<tk.JsonTcpClient>());
+                        Debug.Log("[SandboxServer] init menu handler.");
+                    Debug.Log("[SandboxServer] init menu handler.");
+                    tk.JsonTcpClient jsonTcpClient = GetComponent<tk.JsonTcpClient>();
+                    if (jsonTcpClient == null)
+                    {
+                        Debug.Log("[SandboxServer] creating new json tcp object ");
+                        jsonTcpClient = this.gameObject.AddComponent<tk.JsonTcpClient>();
+                        Debug.Log(client == null);
+                    }
+                    Debug.Log("[SandboxServer] jsonTcpclient created");
+                    handler.Init(jsonTcpClient);
+                    Debug.Log("[SandboxServer] menu handler initialized.");
                 }
             }
         }
@@ -142,26 +171,28 @@ public class SandboxServer : MonoBehaviour
 
     public void OnSceneLoaded(bool bFrontEnd)
     {
+        Debug.Log("[SandboxServer] on scene loaded function");
         spawnCarswClients = !bFrontEnd;
+        Debug.Log("[SandboxServer] bfrontend value : " +  bFrontEnd);
 
-        List<tk.TcpClient> clients = _server.GetClients();
+        if (_server.debug)
+            Debug.Log("[SandboxServer] init network client.");
+        Debug.Log("[SandboxServer] initclient call");
+        InitClient(_client);
+        Debug.Log("[SandboxServer] initclient called.");
 
-        foreach (tk.TcpClient client in clients)
-        {
-            if (_server.debug)
-                Debug.Log("init network client.");
-
-            InitClient(client);
-        }
-
+        Debug.Log("[SandboxServer] pace car : " + GlobalState.paceCar);
         if (GlobalState.paceCar && !bFrontEnd) // && clients.Count == 0
         {
             CarSpawner spawner = GameObject.FindObjectOfType<CarSpawner>();
+            Debug.Log("[SandboxServer] spawner : " + spawner == null);
             if (spawner)
             {
+                Debug.Log("[SandboxServer] ensure one car.");
                 spawner.EnsureOneCar();
             }
         }
+        Debug.Log("[SandboxServer] on scene loaded function end");
     }
 
     public void OnClientDisconnected(tk.TcpClient client)

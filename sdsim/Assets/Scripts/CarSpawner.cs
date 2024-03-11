@@ -29,7 +29,7 @@ public class CarSpawner : MonoBehaviour
     public RectTransform raceStatusPanel;
     int raceStatusWidth = 380;
     int raceStatusHeight = 100;
-    int n_columns = 2; // number of columns in the RaceStatus panel
+    int n_columns = 1; // number of columns in the RaceStatus panel
 
     public List<GameObject> cars = new List<GameObject>();
     public List<GameObject> cameras = new List<GameObject>();
@@ -51,11 +51,11 @@ public class CarSpawner : MonoBehaviour
 
         foreach (GameObject go in cars)
         {
-            GameObject TcpClientObj = getChildGameObject(go, "TCPClient");
+            GameObject UdpClientObj = getChildGameObject(go, "TCPClient");
 
-            if (TcpClientObj != null)
+            if (UdpClientObj != null)
             {
-                tk.TcpCarHandler handler = TcpClientObj.GetComponent<tk.TcpCarHandler>();
+                tk.TcpCarHandler handler = UdpClientObj.GetComponent<tk.TcpCarHandler>();
 
                 if (handler != null && handler.GetClient() == client)
                 {
@@ -103,10 +103,10 @@ public class CarSpawner : MonoBehaviour
     {
         foreach (GameObject car in cars)
         {
-            tk.TcpCarHandler tcpCarHandler = car.GetComponentInChildren<tk.TcpCarHandler>();
-            if (tcpCarHandler != null && tcpCarHandler.IsGhostCar())
+            tk.TcpCarHandler TcpCarHandler = car.GetComponentInChildren<tk.TcpCarHandler>();
+            if (TcpCarHandler != null && TcpCarHandler.IsGhostCar())
             {
-                tcpCarHandler.Boot();
+                TcpCarHandler.Boot();
             }
         }
     }
@@ -376,6 +376,8 @@ public class CarSpawner : MonoBehaviour
 
     public GameObject Spawn(tk.JsonTcpClient client, bool paceCar)
     {
+
+        Debug.Log("Spawning car");
         if (carPrefab == null)
         {
             Debug.LogError("No carPrefab set in CarSpawner!");
@@ -399,18 +401,18 @@ public class CarSpawner : MonoBehaviour
         go.GetComponent<Car>().SavePosRot();
         UpdateSplitScreenCams();
 
-        GameObject TcpClientObj = getChildGameObject(go, "TCPClient");
+        GameObject UdpClientObj = getChildGameObject(go, "TCPClient");
 
 
         // CarTextFacecamera(go, cam.transform);
 
-        if (TcpClientObj != null)
+        if (UdpClientObj != null)
         {
             // without this it will not connect.
-            TcpClientObj.SetActive(true);
+            UdpClientObj.SetActive(true);
 
             // now set the connection settings.
-            TcpCarHandler carHandler = TcpClientObj.GetComponent<TcpCarHandler>();
+            TcpCarHandler carHandler = UdpClientObj.GetComponent<TcpCarHandler>();
 
             if (carHandler != null)
                 carHandler.Init(client);
@@ -481,6 +483,7 @@ public class CarSpawner : MonoBehaviour
     internal void EnsureOneCar()
     {
         // pace car doesn't always mean cars.Count = 0, so will need to refactor that
+        Debug.Log("ensuring one car in car spawner class");
         if (cars.Count == 0)
             Spawn(null, GlobalState.paceCar);
     }

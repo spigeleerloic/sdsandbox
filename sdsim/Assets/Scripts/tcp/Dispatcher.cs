@@ -28,6 +28,7 @@ namespace tk
 
         public void Register(string msgType, Delegates.OnMsgRecv regCallback)
         {
+            Debug.Log("Registering: " + msgType + " with " + regCallback.ToString() + " in dispatcher: " + this.ToString());
             Delegates Delegates = null;
         
             if (eventDictionary.TryGetValue (msgType, out Delegates))

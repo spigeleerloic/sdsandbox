@@ -16,7 +16,7 @@ public class SandboxClient : MonoBehaviour
     public void OnRecvData(byte[] data)
     {
         /// echo client...
-        _client.SendDataToPeers(data);
+        _client.SendData(data);
     }
 
 }

@@ -9,7 +9,7 @@ public class PrivateAPI : MonoBehaviour
     public void Init(tk.JsonTcpClient _client)
     {
         tk.TcpPrivateAPIHandler tcpPrivateAPIHandler = gameObject.AddComponent<tk.TcpPrivateAPIHandler>();
-        tcpPrivateAPIHandler.Init(_client);
+        //tcpPrivateAPIHandler.Init(_client);
         clients.Add(tcpPrivateAPIHandler);
     }
 

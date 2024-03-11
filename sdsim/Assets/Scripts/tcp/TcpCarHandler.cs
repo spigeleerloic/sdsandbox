@@ -7,6 +7,7 @@ using UnityEngine.SceneManagement;
 using UnityStandardAssets.ImageEffects;
 using UnityEngine.AI;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace tk
 {
@@ -80,25 +81,40 @@ namespace tk
             if (client == null)
                 return;
 
+            Debug.Log("[TcpCarHandler] client dispatch in main thread");
             client.dispatchInMainThread = false; //too slow to wait.
+            Debug.Log("[TcpCarHandler] get protocol version.");
             client.dispatcher.Register("get_protocol_version", new tk.Delegates.OnMsgRecv(OnProtocolVersion));
+            Debug.Log("[TcpCarHandler] register control.");
             client.dispatcher.Register("control", new tk.Delegates.OnMsgRecv(OnControlsRecv));
+            Debug.Log("[TcpCarHandler] register exit scene.");
             client.dispatcher.Register("exit_scene", new tk.Delegates.OnMsgRecv(OnExitSceneRecv));
+            Debug.Log("[TcpCarHandler] register reset car.");
             client.dispatcher.Register("reset_car", new tk.Delegates.OnMsgRecv(OnResetCarRecv));
+            Debug.Log("[TcpCarHandler] register step mode.");
             client.dispatcher.Register("step_mode", new tk.Delegates.OnMsgRecv(OnStepModeRecv));
+            Debug.Log("[TcpCarHandler] register quit app.");
             client.dispatcher.Register("quit_app", new tk.Delegates.OnMsgRecv(OnQuitApp));
+            Debug.Log("[TcpCarHandler] register regen road.");
             client.dispatcher.Register("regen_road", new tk.Delegates.OnMsgRecv(OnRegenRoad));
+            Debug.Log("[TcpCarHandler] register car config.");
             client.dispatcher.Register("car_config", new tk.Delegates.OnMsgRecv(OnCarConfig));
+            Debug.Log("[TcpCarHandler] register cam config.");
             client.dispatcher.Register("cam_config", new tk.Delegates.OnMsgRecv(OnCamConfig));
+            Debug.Log("[TcpCarHandler] register cam config b.");
             client.dispatcher.Register("cam_config_b", new tk.Delegates.OnMsgRecv(OnCamConfigB));
+            Debug.Log("[TcpCarHandler] register lidar config.");
             client.dispatcher.Register("lidar_config", new tk.Delegates.OnMsgRecv(OnLidarConfig));
+            Debug.Log("[TcpCarHandler] register node position.");
             client.dispatcher.Register("set_position", new tk.Delegates.OnMsgRecv(OnSetPosition));
+            Debug.Log("[TcpCarHandler] register node position.");
             client.dispatcher.Register("node_position", new tk.Delegates.OnMsgRecv(OnNodePositionRecv));
         }
 
         public void Start()
         {
-            SendCarLoaded();
+            Debug.Log("[TcpCarHandler] send starting informations.");
+            SendStartingInformations();
             state = State.SendTelemetry;
         }
 
@@ -113,16 +129,12 @@ namespace tk
                 client.dispatcher.Reset();
         }
 
-        void Disconnect()
-        {
-            client.Disconnect();
-        }
+
 
         public void Boot()
         {
             if (carSpawner != null)
             {
-                if (client != null) { Disconnect(); }
                 carSpawner.RemoveCar(client);
             }
         }
@@ -210,7 +222,59 @@ namespace tk
                 json.AddField("vel_y", velocity.y);
                 json.AddField("vel_z", velocity.z);
             }
+            // add timestamp field
+            DateTime time = DateTime.Now;
+            json.AddField("timestamp", time.ToString("yyyy-MM-dd HH:mm:ss"));
             client.SendMsg(json);
+        }
+
+        void SendStartingInformations()
+        {
+            Debug.Log("[SendStartingInformations] Sending starting informations");
+            if (client == null)
+                return;
+            
+            JSONObject json = new JSONObject(JSONObject.Type.OBJECT);
+            json.AddField("msg_type", "car_loaded");
+            AddLocationMarkers(json);
+            Debug.Log("[SendStartingInformations] will send car loaded message");
+            client.SendMsg(json);
+            Debug.Log("[SendStartingInformations] car loaded.");
+        }
+
+        void AddLocationMarkers(JSONObject json)
+        {
+            LocationMarker[] locationMarkers = GameObject.FindObjectsOfType<LocationMarker>();
+            if (locationMarkers.Length > 0)
+            {
+                // Order location markers by id
+                locationMarkers = locationMarkers.OrderBy(marker => marker.id).ToArray();
+
+                // Create a JSONObject for positions
+                JSONObject positionsJson = new JSONObject(JSONObject.Type.ARRAY);
+
+                foreach (LocationMarker marker in locationMarkers)
+                {
+                    Vector3 coordinates = marker.transform.position / 8.0f;
+
+                    // Create a JSONArray for current position
+                    JSONObject positionJson = new JSONObject(JSONObject.Type.ARRAY);
+                    positionJson.Add(coordinates.x.ToString("F2", CultureInfo.InvariantCulture.NumberFormat));
+                    positionJson.Add(coordinates.y.ToString("F2", CultureInfo.InvariantCulture.NumberFormat));
+                    positionJson.Add(coordinates.z.ToString("F2", CultureInfo.InvariantCulture.NumberFormat));
+
+                    // Add current position to positionsJson
+                    positionsJson.Add(positionJson);
+                }
+
+                // Add positionsJson to the main json object
+                json.AddField("LocationMarker", positionsJson);
+                Debug.Log("Location markers added");
+            }
+            else
+            {
+                Debug.LogWarning("No location markers found.");
+            }
         }
 
         void SendCarLoaded()
@@ -615,4 +679,5 @@ namespace tk
             else { return false; }
         }
     }
+
 }

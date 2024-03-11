@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using System;
+using System.Net;
 
 namespace tk
 {
@@ -18,7 +19,7 @@ namespace tk
 
         // Some messages need to be handled in the main thread. Unity object creation, etc..
         public bool dispatchInMainThread = false;
-
+    
         // A list of raw json strings received from network and waiting to dispatched locally.
         private List<string> recv_packets;
 
@@ -28,6 +29,7 @@ namespace tk
         //required for stream parsing where client may recv multiple messages at once.
         const string packetTerminationChar = "\n";
 
+        private EndPoint _remoteEndPoint = new IPEndPoint(IPAddress.Any, 0);
 
         void Awake()
         {
@@ -35,28 +37,17 @@ namespace tk
             dispatcher = new tk.Dispatcher();
             dispatcher.Init();
             client = GetComponent<tk.TcpClient>();
-            
+    
             Initcallbacks();
+
         }
 
         // Interact with our base TcpClient to handle incoming data
         void Initcallbacks()
         {
-            client.onDataRecvCB += new TcpClient.OnDataRecv(OnDataRecv);
-            client.onConnectedCB += new TcpClient.OnConnected(OnConnected);
-        }
-
-        public void OnConnected()
-        {
+            client.onDataRecvCB += OnDataRecv ;
             recv_packets.Add("{\"msg_type\" : \"connected\"}");
         }
-
-        // Close our socket connection
-        public void Disconnect()
-        {
-            client.Disconnect();
-        }
-
 
         // Send a json packet over our TCP socket asynchronously.
         public void SendMsg(JSONObject msg)
@@ -64,7 +55,7 @@ namespace tk
             string packet = msg.ToString() + packetTerminationChar;
 
             byte[] bytes = System.Text.Encoding.UTF8.GetBytes(packet);
-
+            Debug.Log("[JsonTcpClient] Sending packet to [TcpClient] : " + packet);
             client.SendData( bytes );
         }
 
@@ -90,46 +81,57 @@ namespace tk
         {
             List<string> result = new List<string>();
             string jsonBuffer = "";
-            string[] jsonMessages;
 
-            //Ignore request if TCP buffer list is empty
+            // Ignore request if TCP buffer list is empty
             if (recv_packets.Count == 0) {
                 return result;
             }
 
-            // Concat all reveiced TCP buffers to have change to extract as much as possible JSON objects
-            foreach(string str in recv_packets)
+            // Concat all received TCP buffers to have a chance to extract as much as possible JSON objects
+            foreach (string str in recv_packets)
             {
-                jsonBuffer = String.Concat (jsonBuffer, str);
+                jsonBuffer = String.Concat(jsonBuffer, str);
             }
 
             recv_packets.Clear();
 
-            // Split data received on each json object delimitor 
-            jsonMessages = jsonBuffer.Split("{"[0]); 
+            // Initialize a counter for the number of opening and closing braces
+            int openBraces = 0;
+            int closeBraces = 0;
+            int startIndex = 0;
 
-            for (int i = 0; i < jsonMessages.Length; i++) {
-                // Ignore empty parts, this is likely side effect of Split
-                if (jsonMessages[i].Length == 0)
+            // Iterate through the buffer to find complete JSON objects
+            for (int i = 0; i < jsonBuffer.Length; i++)
+            {
+                if (jsonBuffer[i] == '{')
                 {
-                    continue;
+                    openBraces++;
                 }
-                // Since split remove delimitor, add it back to keep JSON structure
-                string theMessage = jsonMessages[i].Insert(0, "{");
-                // If JSON message is complete, add to list of complete JSON message
-                if (theMessage[0]=='{' && theMessage.Substring(theMessage.Length - 1)[0]=='}') 
+                else if (jsonBuffer[i] == '}')
                 {
-                    result.Add(theMessage);
-                } else {
-                    if (i==(jsonMessages.Length-1)) {
-                        //last message is a partial one, push back to recv_packets
-                        recv_packets.Add (theMessage);
-                    } else {
-                        Debug.Log("Unexpected partial JSON object in the middle of the TCP buffer !, buffer = "+jsonBuffer);                    
-                    }
+                    closeBraces++;
                 }
-                
+
+                // If the number of opening and closing braces match, we have a complete JSON object
+                if (openBraces == closeBraces && openBraces > 0)
+                {
+                    // Extract the JSON object and add it to the result list
+                    string jsonObject = jsonBuffer.Substring(startIndex, i - startIndex + 1);
+                    result.Add(jsonObject);
+
+                    // Reset the counters and start index for the next JSON object
+                    openBraces = 0;
+                    closeBraces = 0;
+                    startIndex = i + 1;
+                }
             }
+
+            // If there is any remaining data in the buffer, add it back to recv_packets
+            if (startIndex < jsonBuffer.Length)
+            {
+                recv_packets.Add(jsonBuffer.Substring(startIndex));
+            }
+
             return result;
         }
 
@@ -145,12 +147,13 @@ namespace tk
                     try
                     {
                         //Only extract and propagate the last one to avoid to overload simulator in case of burst
+                        Debug.Log("[JsonTcpClient] Message extracted from json stream: " + msg);
                         JSONObject j = new JSONObject(msg);
 
                         string msg_type = j["msg_type"].str;
 
                         // Debug.Log("Got: " + msg_type);
-
+                        Debug.Log("[JsonTcpClient] Dispatching message of type: " + msg_type);
                         dispatcher.Dipatch(msg_type, j);
 
                     }

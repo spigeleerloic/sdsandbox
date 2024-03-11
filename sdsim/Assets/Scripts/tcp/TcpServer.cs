@@ -11,16 +11,8 @@ namespace tk
 {   
     public class TcpServer : MonoBehaviour
     {
-        // register for OnClientConnected to handle the game specific creation of TcpClients with a MonoBehavior
-        public delegate TcpClient OnClientConnected();
-        public OnClientConnected onClientConntedCB;
 
-        // register for OnClientDisconnected to have an opportunity to handle dropped clients
-        public delegate void OnClientDisconnected(TcpClient client);
-        public OnClientDisconnected onClientDisconntedCB;
-
-        // Server listener socket
-        Socket listener = null;
+        UdpClient udpServer;
 
         // Accept thread
         Thread thread = null;
@@ -28,51 +20,36 @@ namespace tk
         // Thread signal.  
         public ManualResetEvent allDone = new ManualResetEvent(false);
 
-        // All connected clients
-        List<TcpClient> clients = new List<TcpClient>();
-
-        // All new clients that need a onClientConntedCB callback
-        List<Socket> new_clients = new List<Socket>();
-
         // Lock object to protect access to new_clients
         readonly object _locker = new object();
 
+        private int _port;
+        private IPEndPoint _endPoint;
+
         // Verbose messages
         public bool debug = false;
+
 
         // Call the Run method to start the server. The ip address is typically 127.0.0.1 to accept only local connections.
         // Or 0.0.0.0 to bind to all incoming connections for this NIC.
         public void Run(string ip, int port)
         {
-            Bind(ip, port);
 
-            // Poll for new connections in the ListenLoop
-            thread = new Thread(ListenLoop);
-            thread.Start();
+            //Bind(ip, port);
+            _port = port;
+            if (_endPoint == null)
+            {
+                _endPoint = new IPEndPoint(IPAddress.Parse(ip), _port);
+            }
         }
 
         // Stop the server. Will disconnect all clients and shutdown networking.
         public void Stop()
         {
-            foreach( TcpClient client in clients)
+            if (udpServer != null)
             {
-                client.ReleaseServer();
-                client.Disconnect();
-            }
-
-            clients.Clear();
-
-            if (thread != null)
-            {
-                thread.Abort();
-                thread = null;
-            }
-
-            if(listener != null)
-            {
-                listener.Close();
-                listener = null;
-                Debug.Log("Server stopped.");
+                udpServer.Close();
+                udpServer = null;
             }
         }
 
@@ -83,136 +60,51 @@ namespace tk
         }
 
         // SendData will broadcast send to all peers
-        public void SendData(byte[] data, TcpClient skip = null)
+        public void SendData(byte[] data)
         {
-            foreach (TcpClient client in clients)
+            if (udpServer != null)
             {
-                if (client == skip)
-                    continue;
-
-                client.SendData(data);
-
-                if(debug)
-                {
-                    Debug.Log("sent: " + System.Text.Encoding.Default.GetString(data));
-                }
-            }
-        }
-
-        // Remove reference to TcpClient
-        public void RemoveClient(TcpClient client)
-        {
-            clients.Remove(client);
-        }
-
-        public List<TcpClient> GetClients()
-        {
-            return clients;
-        }
-
-        public void Update()
-        {
-            lock (_locker)
-            {
-                // Because we might be creating GameObjects we need this callback to happen in the main
-                // thread context. So we queue new sockets and then create their TcpClients from here.
-                if (new_clients.Count > 0)
-                {
-                    if (onClientConntedCB != null)
-                    {
-                        foreach (Socket handler in new_clients)
-                        {
-                            TcpClient client = onClientConntedCB.Invoke();
-
-                            if (client != null)
-                            {
-                                if(client.OnServerAccept(handler, this))
-                                {
-                                    clients.Add(client);
-                                    client.SetDebug(debug);
-                                    client.ClientFinishedConnect();
-                                }
-                            }
-                        }
-                    }
-
-                    new_clients.Clear();
-                }
-            }
-
-            //Poll for dropped connection.
-            foreach(TcpClient client in clients)
-            {
-                if(client.IsDropped())
-                {
-                    onClientDisconntedCB.Invoke(client);
-                }
+                udpServer.Send(data, data.Length, _endPoint);
             }
         }
 
         // Start listening for connections
         private void Bind(string ip, int port)
         {
-            IPAddress ipAddress = IPAddress.Parse(ip);
-            IPEndPoint localEndPoint = new IPEndPoint(ipAddress, port);
+            if (ip == "0.0.0.0" || ip == "::0")
+            {
+                Debug.LogError("[connect] Invalid IP address. Cannot bind to unspecified address.");
+                _endPoint = new IPEndPoint(IPAddress.Parse(GlobalState.host), GlobalState.portPrivateAPI);
+            }
+            else{
+                IPAddress ipAddress = IPAddress.Parse(ip);
+                _endPoint = new IPEndPoint(ipAddress, GlobalState.portPrivateAPI);
+            }
 
-            // Create a TCP/IP socket.  
-            listener = new Socket(ipAddress.AddressFamily,
-                SocketType.Stream, ProtocolType.Tcp);
+            Debug.Log("Binding to: " + _endPoint.ToString());
+            udpServer = new UdpClient(port);
+            Debug.Log("Server Bound to port : " + port.ToString());
 
-            //Bind to address
-            listener.Bind(localEndPoint);
-            listener.Listen(100);
+            //udpServer.BeginReceive(ListenLoop, udpServer);
 
-            Debug.Log("Server Listening on: " + ip + ":" + port.ToString());
+            //Debug.Log("Server Listening on: " + ip + ":" + port.ToString());
         }
 
-        // Thread loop to wait for new connections
-        private void ListenLoop()
+        private void ListenLoop(IAsyncResult ar)
         {
-            while(true)
-            {
-                // Set the event to non-signaled state.  
-                allDone.Reset();
 
-                // Start an asynchronous socket to listen for connections.  
-                Debug.Log("Waiting for a connection...");
-                listener.BeginAccept(
-                    new AsyncCallback(AcceptCallback),
-                    listener);
+            byte [] data = udpServer.Receive(ref _endPoint);
+            Debug.Log("[ListenLoop] Received data from: " + _endPoint.ToString());
 
-                // Wait until a connection is made before continuing.  
-                allDone.WaitOne();
-            }
-        }
+            string message = Encoding.ASCII.GetString(data);
+            Debug.Log("[ListenLoop] Received data: " + message);
 
-        // Callback to handle new connections
-        private void AcceptCallback(IAsyncResult ar)
-        {
-            // Signal the main thread to continue.  
-            allDone.Set();
+            this.SendData(data);
+            Debug.Log("[ListenLoop] Sent data");
 
-            // Get the socket that handles the client request.  
-            Socket listener = (Socket)ar.AsyncState;
 
-            try
-            {
-                Socket handler = listener.EndAccept(ar);
-
-                Debug.Log("client connected.");
-
-                lock (_locker)
-                {
-                    // Add clients to this new_clients list.
-                    // They will get a onClientConntedCB later on in the Update method.
-                    new_clients.Add(handler);
-                }
-            }
-            catch(SocketException e)
-            {
-                Debug.LogError(e.ToString());
-            }
-            
+            udpServer.BeginReceive(ListenLoop, udpServer);
+            Debug.Log("[ListenLoop] Begin receive again");
         }
     }
 
