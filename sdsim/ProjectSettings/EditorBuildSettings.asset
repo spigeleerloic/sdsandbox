@@ -38,4 +38,19 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/mountain_track.unity
     guid: fa958af1d4fc8ef449b0c7b710692aad
+  - enabled: 0
+    path: Assets/Scenes/hill-climbing.unity
+    guid: dae59774a0458264e93b25c30d8e22f9
+  - enabled: 1
+    path: Assets/Scenes/steep-ascent.unity
+    guid: 27738879ba5580843ae33069b9db2e41
+  - enabled: 0
+    path: Assets/Scenes/slope-road.unity
+    guid: 74a65a56850081941ad9baac31fc889e
+  - enabled: 0
+    path: Assets/Scenes/no-hills.unity
+    guid: 30d2672af748c3446b76f0bb68808d8f
+  - enabled: 0
+    path: Assets/Scenes/deform-hill.unity
+    guid: 0a5f518e38016024d86d2e1a3f042044
   m_configObjects: {}

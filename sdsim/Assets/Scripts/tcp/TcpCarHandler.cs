@@ -7,6 +7,7 @@ using UnityEngine.SceneManagement;
 using UnityStandardAssets.ImageEffects;
 using UnityEngine.AI;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace tk
 {
@@ -47,6 +48,12 @@ namespace tk
         float time_step = 0.1f;
         bool bResetCar = false;
         bool bExitScene = false;
+
+        Vector3 [] markers;
+        float [] cumulative_distances;
+        int index_marker;
+        float maximal_distance;
+        
 
         public enum State
         {
@@ -94,11 +101,16 @@ namespace tk
             client.dispatcher.Register("lidar_config", new tk.Delegates.OnMsgRecv(OnLidarConfig));
             client.dispatcher.Register("set_position", new tk.Delegates.OnMsgRecv(OnSetPosition));
             client.dispatcher.Register("node_position", new tk.Delegates.OnMsgRecv(OnNodePositionRecv));
+
+            client.dispatcher.Register("pause", new tk.Delegates.OnMsgRecv(OnPauseRecv));
+            client.dispatcher.Register("resume", new tk.Delegates.OnMsgRecv(OnResumeRecv));
         }
 
         public void Start()
         {
-            SendCarLoaded();
+            Debug.Log("[TcpCarHandler] send starting informations.");
+            initialize_distances();
+            SendStartingInformations();
             state = State.SendTelemetry;
         }
 
@@ -127,6 +139,14 @@ namespace tk
             }
         }
 
+        void OnPauseRecv(){
+            time.timeScale = 0.0f;
+        }
+
+        void OnResumeRecv(){
+            time.timeScale = 1.0f;
+        }
+
         void OnProtocolVersion(JSONObject msg)
         {
             JSONObject json = new JSONObject(JSONObject.Type.OBJECT);
@@ -134,6 +154,30 @@ namespace tk
             json.AddField("version", "2");
 
             client.SendMsg(json);
+        }
+
+        void initialize_distances(){
+            LocationMarker[] locationMarkers = GameObject.FindObjectsOfType<LocationMarker>();
+            locationMarkers = locationMarkers.OrderBy(marker => marker.id).ToArray();
+            markers = new Vector3[locationMarkers.Length];
+            cumulative_distances = new float[locationMarkers.Length];
+            float [] distances = new float[locationMarkers.Length];
+            
+            maximal_distance = 0.0f;
+            for (int i = 0; i < locationMarkers.Length; i++)
+            {
+                markers[i] = locationMarkers[i].transform.position / 8.0f; 
+                Vector3 next_marker = locationMarkers[(i+1) % locationMarkers.Length].transform.position / 8.0f;
+                distances[i] = Vector3.Distance(markers[i], next_marker);
+                maximal_distance += distances[i];
+            }
+            float accumulator = 0.0f;
+            for(int i = locationMarkers.Length - 1; i >= 0; i--)
+            {
+                accumulator += distances[i];
+                cumulative_distances[i] = accumulator;
+            }
+            index_marker = 1;
         }
 
         void SendTelemetry()
@@ -198,19 +242,163 @@ namespace tk
                 json.AddField("totalNodes", pm.carPath.nodes.Count);
             }
 
-            // not intended to use in races, just to train 
-            if (GlobalState.extendedTelemetry)
-            {
-                Vector3 pos = tm.position / 8.0f;
-                json.AddField("pos_x", pos.x);
-                json.AddField("pos_y", pos.y);
-                json.AddField("pos_z", pos.z);
+            Vector3 pos = tm.position / 8.0f;
+            json.AddField("pos_x", pos.x);
+            json.AddField("pos_y", pos.y);
+            json.AddField("pos_z", pos.z);
 
-                json.AddField("vel_x", velocity.x);
-                json.AddField("vel_y", velocity.y);
-                json.AddField("vel_z", velocity.z);
+            json.AddField("vel_x", velocity.x);
+            json.AddField("vel_y", velocity.y);
+            json.AddField("vel_z", velocity.z);
+
+            SendCloseBarriers(tm.position, tm.rotation, json);
+
+            // send vsp
+            float acceleration = Mathf.Sqrt(Mathf.Pow(accel.x, 2) + Mathf.Pow(accel.y, 2) + Mathf.Pow(accel.z, 2)); 
+            float speed = velocity.magnitude;
+            float road_grade = Mathf.Tan(eulerAngles.x * Mathf.Deg2Rad);
+
+            float gravity = 9.81f;
+            float rolling_resistance = 0.132f;
+            float aerodynamic_drag = 0.000302f;
+
+            float vsp = (speed * (1.1f * acceleration + gravity * Mathf.Sin(road_grade) + rolling_resistance) + aerodynamic_drag * Mathf.Pow(speed, 3));
+            json.AddField("vsp", vsp.ToString("F2", CultureInfo.InvariantCulture.NumberFormat));
+
+            // send distance to objective 
+            float distance_to_next_marker = Vector3.Distance(pos, markers[index_marker]);
+            float distance_to_objective = distance_to_next_marker + cumulative_distances[index_marker];
+
+            if (distance_to_next_marker < 1.0f)
+            {
+                index_marker = (index_marker + 1) % markers.Length;
             }
+            if (distance_to_objective < 1.0f)
+            {
+                json.AddField("objective_reached", true);
+            }
+            
+            float normalized = distance_to_objective / maximal_distance;
+
+            json.AddField("distance_to_objective", normalized.ToString("F2", CultureInfo.InvariantCulture.NumberFormat));
+            json.AddField("next_marker", index_marker.ToString("F2", CultureInfo.InvariantCulture.NumberFormat));
+            // add timestamp field
+            DateTime time = DateTime.Now;
+            json.AddField("timestamp", time.ToString("yyyy-MM-dd HH:mm:ss"));
             client.SendMsg(json);
+        }
+
+
+
+        void SendCloseBarriers(Vector3 pos, Quaternion rotation, JSONObject json)
+        {
+            float rayLength = 20f;
+            // calculate the direction vectors for the left and right rays
+            Vector3 leftDir = rotation * new Vector3(-1, 0, 0); // rotate -X axis to world space
+            Vector3 rightDir = rotation * new Vector3(1, 0, 0); // rotate X axis to world space
+
+            // create the raycast hits
+            RaycastHit leftHit;
+            RaycastHit rightHit;
+            JSONObject rayCastFences = new JSONObject(JSONObject.Type.ARRAY);
+
+            float distance_to_middle_line = 0.0f;
+
+            // check for collisions on the left and right rays
+            if (Physics.Raycast(pos, leftDir, out leftHit, rayLength))
+            {
+
+                // Check if the ray hit a fence
+                if (leftHit.collider.gameObject.name == "FencePanel")
+                {
+                    //Debug.LogError("Left Ray Hit Fence panel: " + leftHit.collider.gameObject.name);
+                    // add world position of the hit point to the json object
+                    Vector3 leftFencePos = leftHit.point;
+                    JSONObject leftRayHit = new JSONObject(JSONObject.Type.ARRAY);
+                    leftRayHit.Add(leftFencePos.x.ToString("F2", CultureInfo.InvariantCulture.NumberFormat));
+                    leftRayHit.Add(leftFencePos.y.ToString("F2", CultureInfo.InvariantCulture.NumberFormat));
+                    leftRayHit.Add(leftFencePos.z.ToString("F2", CultureInfo.InvariantCulture.NumberFormat));
+                    rayCastFences.Add(leftRayHit);
+                    
+                    float leftFenceDistance = leftHit.distance;
+                    distance_to_middle_line = leftFenceDistance;
+                }
+            }
+            
+            if (Physics.Raycast(pos, rightDir, out rightHit, rayLength))
+            {
+
+                if (rightHit.collider.gameObject.name == "FencePanel")
+                {
+                    //Debug.LogError("Right Ray Hit Fence panel: " + rightHit.collider.gameObject.name);
+                    // add world position of the hit point to the json object
+                    Vector3 rightFencePos = rightHit.point;
+                    JSONObject rightRayHit = new JSONObject(JSONObject.Type.ARRAY);
+                    rightRayHit.Add(rightFencePos.x.ToString("F2", CultureInfo.InvariantCulture.NumberFormat));
+                    rightRayHit.Add(rightFencePos.y.ToString("F2", CultureInfo.InvariantCulture.NumberFormat));    
+                    rightRayHit.Add(rightFencePos.z.ToString("F2", CultureInfo.InvariantCulture.NumberFormat));
+                    rayCastFences.Add(rightRayHit);
+
+                    float rightFenceDistance = rightHit.distance;
+                    distance_to_middle_line = distance_to_middle_line - rightFenceDistance;
+                }
+            }
+            if (leftHit.collider != null && rightHit.collider != null)  
+            {
+                float normalized = distance_to_middle_line / 10.0f;
+                json.AddField("distance_to_middle_line", normalized.ToString("F2", CultureInfo.InvariantCulture.NumberFormat));
+            }
+            json.AddField("rayCastFences", rayCastFences);
+
+            // compute distance to both fences
+            client.SendMsg(json);
+        }
+
+        void SendStartingInformations()
+        {
+            if (client == null)
+                return;
+            
+            JSONObject json = new JSONObject(JSONObject.Type.OBJECT);
+            json.AddField("msg_type", "car_loaded");
+            //AddLocationMarkers(json);
+            client.SendMsg(json);
+            Debug.Log("car loaded.");
+        }
+
+        void AddLocationMarkers(JSONObject json)
+        {
+            LocationMarker[] locationMarkers = GameObject.FindObjectsOfType<LocationMarker>();
+            if (locationMarkers.Length > 0)
+            {
+                // Order location markers by id
+                locationMarkers = locationMarkers.OrderBy(marker => marker.id).ToArray();
+
+                // Create a JSONObject for positions
+                JSONObject positionsJson = new JSONObject(JSONObject.Type.ARRAY);
+
+                foreach (LocationMarker marker in locationMarkers)
+                {
+                    Vector3 coordinates = marker.transform.position / 8.0f;
+
+                    // Create a JSONArray for current position
+                    JSONObject positionJson = new JSONObject(JSONObject.Type.ARRAY);
+                    positionJson.Add(coordinates.x.ToString("F2", CultureInfo.InvariantCulture.NumberFormat));
+                    positionJson.Add(coordinates.y.ToString("F2", CultureInfo.InvariantCulture.NumberFormat));
+                    positionJson.Add(coordinates.z.ToString("F2", CultureInfo.InvariantCulture.NumberFormat));
+
+                    // Add current position to positionsJson
+                    positionsJson.Add(positionJson);
+                }
+
+                // Add positionsJson to the main json object
+                // json.AddField("LocationMarker", positionsJson);
+                Debug.Log("Location markers added");
+            }
+            else
+            {
+                Debug.LogWarning("No location markers found.");
+            }
         }
 
         void SendCarLoaded()
@@ -270,6 +458,7 @@ namespace tk
 
         void OnResetCarRecv(JSONObject json)
         {
+            Debug.Log("Got reset car message");
             bResetCar = true;
         }
 
@@ -563,6 +752,7 @@ namespace tk
             {
                 if (bResetCar)
                 {
+                    Debug.Log("bReset car set to true");
                     car.RestorePosRot();
 
                     if (carObj != null)
@@ -576,7 +766,7 @@ namespace tk
                         if (pm)
                             iActiveSpan = 0;
                     }
-
+                    index_marker = 1;
                     bResetCar = false;
                 }
 
@@ -615,4 +805,5 @@ namespace tk
             else { return false; }
         }
     }
+
 }
