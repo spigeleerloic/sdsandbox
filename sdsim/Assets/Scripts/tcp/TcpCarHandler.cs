@@ -101,7 +101,6 @@ namespace tk
             client.dispatcher.Register("lidar_config", new tk.Delegates.OnMsgRecv(OnLidarConfig));
             client.dispatcher.Register("set_position", new tk.Delegates.OnMsgRecv(OnSetPosition));
             client.dispatcher.Register("node_position", new tk.Delegates.OnMsgRecv(OnNodePositionRecv));
-
             client.dispatcher.Register("pause", new tk.Delegates.OnMsgRecv(OnPauseRecv));
             client.dispatcher.Register("resume", new tk.Delegates.OnMsgRecv(OnResumeRecv));
         }
@@ -139,12 +138,14 @@ namespace tk
             }
         }
 
-        void OnPauseRecv(){
-            time.timeScale = 0.0f;
+        void OnPauseRecv(JSONObject json){
+            Time.timeScale = 0.0f;
+            Time.fixedDeltaTime = 0.0f;
         }
 
-        void OnResumeRecv(){
-            time.timeScale = 1.0f;
+        void OnResumeRecv(JSONObject json){
+            Time.timeScale = 1.0f;
+            Time.fixedDeltaTime = 0.01f;
         }
 
         void OnProtocolVersion(JSONObject msg)
@@ -267,8 +268,12 @@ namespace tk
 
             // send distance to objective 
             float distance_to_next_marker = Vector3.Distance(pos, markers[index_marker]);
-            float distance_to_objective = distance_to_next_marker + cumulative_distances[index_marker];
+            float distance_to_objective = distance_to_next_marker;
 
+            // do not add cumulative distance as the last step is only the distance towards the next marker
+            float marker_is_not_destination_marker = (index_marker == 0) ? 0.0f : 1.0f;
+            distance_to_objective += cumulative_distances[index_marker] * marker_is_not_destination_marker;
+            
             if (distance_to_next_marker < 1.0f)
             {
                 index_marker = (index_marker + 1) % markers.Length;
