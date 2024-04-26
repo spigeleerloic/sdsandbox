@@ -53,6 +53,9 @@ namespace tk
         float [] cumulative_distances;
         int index_marker;
         float maximal_distance;
+
+        float current_delta_time = 0.0f;
+        float current_time_scale = 0.0f;
         
 
         public enum State
@@ -108,6 +111,8 @@ namespace tk
         public void Start()
         {
             Debug.Log("[TcpCarHandler] send starting informations.");
+            current_delta_time = Time.fixedDeltaTime;
+            current_time_scale = Time.timeScale;
             initialize_distances();
             SendStartingInformations();
             state = State.SendTelemetry;
@@ -144,8 +149,8 @@ namespace tk
         }
 
         void OnResumeRecv(JSONObject json){
-            Time.timeScale = 1.0f;
-            Time.fixedDeltaTime = 0.01f;
+            Time.timeScale = current_time_scale;
+            Time.fixedDeltaTime = current_delta_time;
         }
 
         void OnProtocolVersion(JSONObject msg)
@@ -170,7 +175,10 @@ namespace tk
                 markers[i] = locationMarkers[i].transform.position / 8.0f; 
                 Vector3 next_marker = locationMarkers[(i+1) % locationMarkers.Length].transform.position / 8.0f;
                 distances[i] = Vector3.Distance(markers[i], next_marker);
-                maximal_distance += distances[i];
+                if (i == 0){
+                    // early stopping
+                    maximal_distance += distances[i];
+                }
             }
             float accumulator = 0.0f;
             for(int i = locationMarkers.Length - 1; i >= 0; i--)
@@ -271,17 +279,20 @@ namespace tk
             float distance_to_objective = distance_to_next_marker;
 
             // do not add cumulative distance as the last step is only the distance towards the next marker
-            float marker_is_not_destination_marker = (index_marker == 0) ? 0.0f : 1.0f;
-            distance_to_objective += cumulative_distances[index_marker] * marker_is_not_destination_marker;
+            //float marker_is_not_destination_marker = (index_marker == 0) ? 0.0f : 1.0f;
+            //distance_to_objective += cumulative_distances[index_marker] * marker_is_not_destination_marker;
             
             if (distance_to_next_marker < 1.0f)
             {
                 index_marker = (index_marker + 1) % markers.Length;
-            }
-            if (distance_to_objective < 1.0f)
-            {
+                // stopping early 
                 json.AddField("objective_reached", true);
             }
+
+            // if (distance_to_objective < 1.0f)
+            // {
+            //     json.AddField("objective_reached", true);
+            // }
             
             float normalized = distance_to_objective / maximal_distance;
 
