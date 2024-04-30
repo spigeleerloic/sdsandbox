@@ -56,6 +56,8 @@ namespace tk
 
         float current_delta_time = 0.0f;
         float current_time_scale = 0.0f;
+
+        int last_marker = 1;
         
 
         public enum State
@@ -165,15 +167,22 @@ namespace tk
         void initialize_distances(){
             LocationMarker[] locationMarkers = GameObject.FindObjectsOfType<LocationMarker>();
             locationMarkers = locationMarkers.OrderBy(marker => marker.id).ToArray();
-            markers = new Vector3[locationMarkers.Length];
-            cumulative_distances = new float[locationMarkers.Length];
-            float [] distances = new float[locationMarkers.Length];
+
+            int numberOfMarkers = locationMarkers.Length;
+            if (last_marker != 0.0f){
+                numberOfMarkers = last_marker + 1; // no longer cyclic
+            }
+
+            markers = new Vector3[numberOfMarkers];
+            cumulative_distances = new float[numberOfMarkers];
+            float [] distances = new float[numberOfMarkers];
             
+            // create cumulative distances for faster computation on update
             maximal_distance = 0.0f;
-            for (int i = 0; i < locationMarkers.Length; i++)
+            for (int i = 0; i < numberOfMarkers; i++)
             {
                 markers[i] = locationMarkers[i].transform.position / 8.0f; 
-                Vector3 next_marker = locationMarkers[(i+1) % locationMarkers.Length].transform.position / 8.0f;
+                Vector3 next_marker = locationMarkers[(i+1) % numberOfMarkers].transform.position / 8.0f;
                 distances[i] = Vector3.Distance(markers[i], next_marker);
                 if (i == 0){
                     // early stopping
@@ -181,7 +190,7 @@ namespace tk
                 }
             }
             float accumulator = 0.0f;
-            for(int i = locationMarkers.Length - 1; i >= 0; i--)
+            for(int i = numberOfMarkers - 1; i >= 0; i--)
             {
                 accumulator += distances[i];
                 cumulative_distances[i] = accumulator;
@@ -279,13 +288,17 @@ namespace tk
             float distance_to_objective = distance_to_next_marker;
 
             // do not add cumulative distance as the last step is only the distance towards the next marker
-            //float marker_is_not_destination_marker = (index_marker == 0) ? 0.0f : 1.0f;
-            //distance_to_objective += cumulative_distances[index_marker] * marker_is_not_destination_marker;
+            float marker_is_not_destination_marker = (index_marker == last_marker) ? 0.0f : 1.0f;
+            distance_to_objective += cumulative_distances[index_marker] * marker_is_not_destination_marker;
             
             if (distance_to_next_marker < 1.0f)
             {
                 index_marker = (index_marker + 1) % markers.Length;
                 // stopping early 
+            }
+
+            if (distance_to_objective < 1.2f)
+            {
                 json.AddField("objective_reached", true);
             }
 
